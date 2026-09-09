@@ -1,0 +1,2 @@
+let refreshing:Promise<Response>|null=null;
+export async function protectedFetch(input:RequestInfo|URL,init:RequestInit={}){let r=await fetch(input,{...init,cache:'no-store'});if(r.status===401){if(!refreshing)refreshing=fetch('/api/session',{cache:'no-store'}).finally(()=>{refreshing=null;});const session=await refreshing;if(session.ok)r=await fetch(input,{...init,cache:'no-store'});else window.dispatchEvent(new Event('nexus-access-change'));}if(r.status===401||r.status===403)window.dispatchEvent(new Event('nexus-access-change'));return r;}

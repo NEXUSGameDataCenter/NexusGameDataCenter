@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {createHash} from 'node:crypto';
+import ts from 'typescript';
+const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'nexus13-tests-'));
+const nativeFetch=globalThis.fetch,saved={...process.env};
+const compile=async(src,name)=>{let s=await fs.readFile(new URL('../'+src,import.meta.url),'utf8');s=s.replace(/['"](?:@\/lib\/|\.\/)(server|auth|session-crypto|image-validation|game-data)['"]/g,"'./$1.mjs'").replace("'next/headers'","'./cookies.mjs'");await fs.writeFile(path.join(tmp,name+'.mjs'),ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);};
+const load=async n=>import(pathToFileURL(path.join(tmp,n+'.mjs')));
+const req=(b,origin='https://nexus.test')=>new Request('https://nexus.test/api',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify(b)});
+const id='13000000-0000-4000-a000-000000000001';
+let role='viewer',status='approved',network=0,writes=0,queries=[],memberExists=true;
+const member=()=>({id,email:'test@example.invalid',display_name:'Tester',role,status});
+const mock=async(input,init={})=>{network++;const u=new URL(input),h=new Headers(init.headers);assert.equal(h.get('apikey'),'sb_publishable_test');
+ if(u.pathname==='/auth/v1/user')return Response.json({id,email:'test@example.invalid',app_metadata:{providers:['google']}});
+ if(u.pathname==='/auth/v1/token')return Response.json({access_token:'access-test',refresh_token:'refresh-test',expires_in:3600});
+ if(u.pathname==='/auth/v1/logout')return new Response(null,{status:204});
+ assert.equal(h.get('authorization'),'Bearer access-test');
+ if(u.pathname.endsWith('/nexus_members')){if(init.method==='POST'){assert.equal(JSON.parse(init.body).role,'viewer');assert.equal(JSON.parse(init.body).status,'pending');memberExists=true;status='pending';return new Response(null,{status:201});}if(init.method==='PATCH'){writes++;return Response.json([member()]);}return Response.json(memberExists?[member()]:[],{headers:{'content-range':'0-0/1'}});}
+ if(u.pathname.endsWith('/rpc/nexus_catalog'))return Response.json({games:[],topics:[],total:361});
+ if(u.pathname.endsWith('/game_entries')){if(init.method==='POST'||init.method==='PATCH'){writes++;return Response.json([{id:'entry',...JSON.parse(init.body)}]);}queries.push(u);assert.equal(h.get('prefer'),'count=exact');assert.equal(u.searchParams.get('published'),'eq.true');assert.match(u.searchParams.get('order'),/id.asc/);const limit=Number(u.searchParams.get('limit')),offset=Number(u.searchParams.get('offset'));return Response.json(Array.from({length:Math.max(0,Math.min(limit,361-offset))},(_,i)=>({id:'entry-'+(offset+i)})),{headers:{'content-range':`${offset}-${Math.min(offset+limit,361)-1}/361`}});}
+ if(u.pathname.endsWith('/games')){if(init.method==='POST'||init.method==='PATCH')writes++;return Response.json([{id:'new-game',image_path:null}]);}
+ if(u.pathname.startsWith('/storage/'))return Response.json({Key:'test'});
+ throw Error('Unexpected mocked URL '+u);
+};
+try{
+ process.env.SUPABASE_URL='https://mock.supabase.co';process.env.SUPABASE_PUBLISHABLE_KEY='sb_publishable_test';process.env.SESSION_SECRET='testing-only-secret-32-characters-long';process.env.SITE_URL='https://nexus.test';
+ await fs.writeFile(path.join(tmp,'cookies.mjs'),`export const jar=new Map();export async function cookies(){return {get:k=>jar.get(k),set:(k,value,options)=>{if(options.maxAge===0)jar.delete(k);else jar.set(k,{value,options});}};}`);
+ for(const n of ['server','auth','session-crypto','image-validation','game-data'])await compile('lib/'+n+'.ts',n);
+ for(const n of ['search','catalog','manage','members','game-image','session'])await compile('app/api/'+n+'/route.ts',n);
+ for(const n of ['start','callback','logout'])await compile('app/api/auth/'+n+'/route.ts',n);
+ const auth=await load('auth'),crypto=await load('session-crypto'),{jar}=await load('cookies'),search=await load('search'),manage=await load('manage'),catalog=await load('catalog'),members=await load('members'),images=await load('game-image'),session=await load('session'),start=await load('start'),callback=await load('callback'),logout=await load('logout');globalThis.fetch=mock;
+ const sealed=crypto.seal({sensitive:'value'});assert.deepEqual(crypto.unseal(sealed),{sensitive:'value'});assert.equal(crypto.unseal(sealed.slice(0,-5)+'ABCDE'),null);assert.ok(!sealed.includes('sensitive'));const key=process.env.SESSION_SECRET;process.env.SESSION_SECRET='short';assert.throws(()=>crypto.seal({}));process.env.SESSION_SECRET=key;
+ console.log('PASS encrypted session roundtrip, tamper rejection, short-secret rejection');
+ assert.equal((await search.POST(req({}))).status,401);assert.equal((await catalog.GET()).status,401);assert.equal((await manage.POST(req({}))).status,401);assert.equal((await members.GET(new Request('https://nexus.test/api/members'))).status,401);assert.equal((await images.GET(new Request('https://nexus.test/api/game-image?game=test'))).status,401);assert.equal(network,0);
+ console.log('PASS anonymous callers rejected on every data route before database access');
+ const login=await start.GET();assert.equal(login.status,302);const location=new URL(login.headers.get('location'));assert.equal(location.searchParams.get('provider'),'google');assert.equal(location.searchParams.get('code_challenge_method'),'s256');const flow=crypto.unseal(jar.get('nexus_pkce').value);assert.equal(location.searchParams.get('code_challenge'),createHash('sha256').update(flow.verifier).digest('base64url'));
+ const wrong=await callback.GET(new Request('https://nexus.test/api/auth/callback?state=wrong&code=code'));assert.match(wrong.headers.get('location'),/auth_error/);assert.equal(jar.has(auth.COOKIE),false);
+ await start.GET();const validFlow=crypto.unseal(jar.get('nexus_pkce').value);const good=await callback.GET(new Request('https://nexus.test/api/auth/callback?state='+validFlow.state+'&code=code'));assert.equal(good.headers.get('location'),'https://nexus.test/');assert.ok(jar.get(auth.COOKIE).options.httpOnly);assert.equal(jar.get(auth.COOKIE).options.sameSite,'lax');
+ console.log('PASS OAuth PKCE challenge, invalid state blocked, valid exchange stores HttpOnly session');
+ memberExists=false;const pending=await session.GET();assert.equal((await pending.json()).member.status,'pending');assert.equal((await search.POST(req({}))).status,403);status='blocked';assert.equal((await catalog.GET()).status,403);status='approved';
+ assert.equal((await manage.POST(req({action:'game.create'}))).status,403);assert.equal((await members.GET(new Request('https://nexus.test/api/members'))).status,403);assert.equal((await images.POST(req({}))).status,403);assert.equal(writes,0);
+ const ids=new Set();for(let page=1;page<=16;page++){const r=await search.POST(req({page,pageSize:24,game:'new-game'}));assert.equal(r.status,200);const d=await r.json();assert.equal(d.total,361);d.entries.forEach(e=>ids.add(e.id));}assert.equal(ids.size,361);
+ await search.POST(req({q:'faq_001',category:'Account',page:2,pageSize:48,game:'any-game'}));const q=queries.at(-1);assert.equal(q.searchParams.get('offset'),'48');assert.equal(q.searchParams.get('game'),'eq.any-game');for(const f of ['title','content','summary','source_id'])assert.ok(q.searchParams.get('or').includes(f+'.ilike'));assert.equal((await search.POST(req({q:'x'.repeat(501)}))).status,400);
+ console.log('PASS pending/blocked access, viewer cannot write, all 361 records pageable, title + content + FAQ search');
+ role='editor';assert.equal((await manage.POST(req({action:'game.create',id:'new-game',name:'New Game',color:'blue'}))).status,200);assert.equal((await manage.POST(req({action:'entry.create',game:'new-game',title:'Q',content:'A'}))).status,200);assert.equal((await manage.POST(req({action:'entry.update',id,game:'new-game',title:'Q2',content:'A2'}))).status,200);assert.equal((await manage.POST(req({action:'game.create'},'https://evil.test'))).status,403);assert.equal((await manage.POST(req({action:'game.create',id:'bad.id',name:'Bad'}))).status,400);assert.equal((await members.GET(new Request('https://nexus.test/api/members'))).status,403);
+ role='admin';assert.equal((await members.GET(new Request('https://nexus.test/api/members'))).status,200);assert.equal((await members.POST(req({id,status:'blocked',role:'viewer'}))).status,409);assert.equal((await members.POST(req({id:'13000000-0000-4000-a000-000000000002',status:'approved',role:'editor'}))).status,200);
+ console.log('PASS editor writes with user JWT, CSRF rejection, role boundaries, admin cannot demote self');
+ const {imageType}=await load('image-validation');assert.throws(()=>imageType(Buffer.from('<svg></svg>')));assert.throws(()=>imageType(new Uint8Array(3145729)));assert.equal(imageType(Buffer.from([255,216,255,224])).mime,'image/jpeg');assert.equal(imageType(Buffer.from('RIFF0000WEBP')).ext,'webp');
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aNQAAAABJRU5ErkJggg==','base64');const form=new FormData();form.set('game','new-game');form.set('file',new File([png],'test.png',{type:'image/png'}));assert.equal((await images.POST(new Request('https://nexus.test/api/game-image',{method:'POST',headers:{Origin:'https://nexus.test'},body:form}))).status,200);
+ console.log('PASS image size/type validation and authenticated upload');
+ await auth.storeSession({access_token:'expired',refresh_token:'refresh-test',expires_at:0});assert.equal((await catalog.GET()).status,401);assert.equal((await session.GET()).status,200);assert.equal((await catalog.GET()).status,200);
+ assert.equal((await logout.POST(req({}))).status,200);assert.equal(jar.has(auth.COOKIE),false);assert.equal((await catalog.GET()).status,401);
+ await auth.storeSession({access_token:'access-test',refresh_token:'refresh-test',expires_at:Date.now()/1000+3600});const original=globalThis.fetch;globalThis.fetch=async(input,init)=>String(input).includes('game_entries')?Response.json({code:'23503',details:'DO_NOT_EXPOSE_PRIVATE_DATA'},{status:409}):original(input,init);const err=await search.POST(req({q:'test'}));assert.equal(err.status,409);assert.ok(!(await err.text()).includes('DO_NOT_EXPOSE_PRIVATE_DATA'));
+ console.log('PASS token refresh, logout protection, safe upstream diagnostics');
+}finally{globalThis.fetch=nativeFetch;for(const k of ['SUPABASE_URL','SUPABASE_PUBLISHABLE_KEY','SESSION_SECRET','SITE_URL']){if(saved[k]===undefined)delete process.env[k];else process.env[k]=saved[k];}await fs.rm(tmp,{recursive:true,force:true});}

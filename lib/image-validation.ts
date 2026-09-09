@@ -1,0 +1,2 @@
+import {AppError} from './server';
+export function imageType(bytes:Uint8Array){if(bytes.length>3*1024*1024)throw new AppError('รูปภาพต้องไม่เกิน 3 MB',413);const b=Buffer.from(bytes);if(b.length>=8&&b.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return {mime:'image/png',ext:'png'};if(b.length>=3&&b[0]===255&&b[1]===216&&b[2]===255)return {mime:'image/jpeg',ext:'jpg'};if(b.length>=12&&b.toString('ascii',0,4)==='RIFF'&&b.toString('ascii',8,12)==='WEBP')return {mime:'image/webp',ext:'webp'};throw new AppError('รองรับเฉพาะรูป PNG, JPEG หรือ WebP',400);}

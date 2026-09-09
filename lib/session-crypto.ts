@@ -1,0 +1,4 @@
+import {createCipheriv,createDecipheriv,createHash,randomBytes} from 'node:crypto';
+function key(){const s=process.env.SESSION_SECRET;if(!s||s.length<32)throw Error('SESSION_SECRET ต้องมีอย่างน้อย 32 ตัวอักษร');return createHash('sha256').update(s).digest();}
+export function seal(data:unknown){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key(),iv);const encrypted=Buffer.concat([cipher.update(JSON.stringify(data),'utf8'),cipher.final()]);return Buffer.concat([iv,cipher.getAuthTag(),encrypted]).toString('base64url');}
+export function unseal<T>(value:string):T|null{try{if(value.length>10000)return null;const data=Buffer.from(value,'base64url');const cipher=createDecipheriv('aes-256-gcm',key(),data.subarray(0,12));cipher.setAuthTag(data.subarray(12,28));return JSON.parse(Buffer.concat([cipher.update(data.subarray(28)),cipher.final()]).toString());}catch{return null;}}

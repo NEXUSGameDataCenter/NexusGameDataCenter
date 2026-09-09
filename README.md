@@ -1,0 +1,145 @@
+# NEXUS Game Knowledge · Version 1.3
+
+ไฟล์เว็บ Next.js สำหรับอัปเกรดเว็บ NEXUS เดิมบน Vercel โดยใช้ฐานข้อมูล Supabase เดิม ข้อมูลเกมและ FAQ ไม่ได้รวมอยู่ใน ZIP และไม่มีการนำเข้าซ้ำ
+
+## สิ่งที่เพิ่มและแก้ไข
+
+- เข้าสู่ระบบผ่าน Google; บัญชีใหม่ส่งคำขอและรอผู้ดูแลอนุมัติก่อนอ่านข้อมูล
+- ผู้ดูแลอนุมัติ ระงับสิทธิ์ และเปลี่ยนบทบาทจาก “จัดการ → สิทธิ์สมาชิก”
+- ผู้เข้าชมอ่านได้; ผู้แก้ไขเพิ่ม/แก้ไขเกม หัวข้อ และรูป; ผู้ดูแลจัดการสมาชิกเพิ่มเติม
+- ตรวจสิทธิ์ใน API ทุกคำขอ และ SQL ใช้ RLS เพื่อป้องกันการเรียก Supabase โดยตรง
+- โหมดสว่าง/มืด เริ่มตามเครื่องและจดจำตัวเลือก; รองรับมือถือ
+- เกมไม่จำกัดชื่อ เพิ่มเกมและอัปโหลดรูปเองได้ (PNG/JPEG/WebP สูงสุด 3 MB)
+- รูปอยู่ใน private bucket และเปิดผ่าน API ที่ตรวจสิทธิ์
+- ค้นทั้งหัวข้อ คำตอบ สรุป รหัส FAQ และชื่อหมวดหมู่; ค้นบางส่วนของข้อความได้
+- แสดงจำนวนจริงและแบ่งหน้า 24/48/96 รายการ ไม่ตัดที่ 60; ปุ่มแก้ไขในหน้าคำตอบ
+- เลิกใช้รหัสผู้ดูแลร่วมและ Secret Key สำหรับเขียนข้อมูล; ใช้บัญชีผู้ใช้ที่ได้รับสิทธิ์
+- ไม่ต้องใช้ OpenAI/AI API การค้นหาเป็นการค้นข้อความจาก Supabase ไม่ใช่ semantic search
+
+## ติดตั้งตามลำดับนี้
+
+SQL ในชุดนี้สำหรับฐานข้อมูล NEXUS เดิมที่มี `games`, `game_entries`, คอลัมน์ `topic` และฟังก์ชัน `nexus_catalog()` อยู่แล้ว อย่าใช้กับฐานข้อมูลว่างโดยไม่เตรียม schema เดิมก่อน
+
+### 1. เตรียม Supabase
+
+เปิดโปรเจกต์ [Nexus Game Data Center](https://supabase.com/dashboard/project/esggoqvrwjdzszahzxlp) → SQL Editor → New query แล้วรัน `supabase/prepare-v1.3.sql` ทั้งไฟล์
+
+ไฟล์นี้เพิ่มตารางสมาชิก รูปเกม และที่เก็บรูปแบบ private ยังไม่ปิดการอ่านข้อมูลเดิมของผู้ไม่เข้าสู่ระบบ และยังไม่เพียงพอที่จะทำให้ฐานข้อมูลทั้งหมดเป็นส่วนตัว ต้องทำขั้นตอน Activate ด้านล่างให้ครบ
+
+เก็บ `nexus_private` ไว้นอก Exposed schemas ของ Data API (ค่าปกติไม่เปิด schema นี้)
+
+### 2. ตั้งค่า Google Login
+
+1. ใน Google Cloud / Google Auth Platform สร้าง OAuth Client แบบ **Web application**
+2. ตั้งค่า Audience และข้อมูลแอป; หากยังอยู่ Testing ให้เพิ่มอีเมลที่จะทดสอบเป็น Test users
+3. Authorized JavaScript origins: `https://nexus-game-data-center.vercel.app`
+4. Authorized redirect URIs: `https://esggoqvrwjdzszahzxlp.supabase.co/auth/v1/callback`
+5. ใน Supabase → Authentication → Sign In / Providers → Google เปิดใช้งานแล้วใส่ **Google Client ID และ Google Client Secret**
+6. ใน Supabase → Authentication → URL Configuration ตั้ง Site URL เป็น `https://nexus-game-data-center.vercel.app`
+7. เพิ่ม Redirect URL: `https://nexus-game-data-center.vercel.app/api/auth/callback**`
+
+ท้าย `**` ในข้อ 7 ใช้รองรับ query `state` ของ callback; ระบุโดเมนจริงให้ตรง หลีกเลี่ยง wildcard ทั้งโดเมน
+
+Google Client Secret ตั้งใน Supabase เท่านั้น ไม่ใช่ Supabase Secret Key และไม่ต้องใส่ในโค้ดเว็บ
+
+หากเปลี่ยนโดเมนให้เปลี่ยน JavaScript origin, Supabase Site URL, Redirect URL และ Vercel SITE_URL ให้ตรงกัน ใช้โดเมนหลักในการเข้าสู่ระบบ ไม่ใช้ URL Preview ที่ยังไม่ได้ตั้งค่า
+
+อ้างอิง: [Supabase Google Login](https://supabase.com/docs/guides/auth/social-login/auth-google), [Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
+
+### 3. ตั้งค่า Vercel และอัปโหลดโค้ด
+
+เปิดโปรเจกต์ใน Vercel → Settings → Environment Variables เพิ่มใน Production:
+
+| ชื่อ | ค่า |
+| --- | --- |
+| `SUPABASE_URL` | `https://esggoqvrwjdzszahzxlp.supabase.co` |
+| `SUPABASE_PUBLISHABLE_KEY` | Publishable key ของโปรเจกต์เดียวกัน จาก Supabase Settings → API Keys |
+| `SITE_URL` | `https://nexus-game-data-center.vercel.app` |
+| `SESSION_SECRET` | ค่าสุ่มส่วนตัวอย่างน้อย 32 ตัวอักษร ใช้เข้ารหัสคุกกี้ |
+
+สร้าง SESSION_SECRET บนเครื่องของคุณ:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+ห้ามใช้ข้อความตัวอย่างเป็นคีย์จริง ห้ามเติม `NEXT_PUBLIC_` ให้ SESSION_SECRET และห้ามอัปโหลดไฟล์ `.env` ที่มีค่าจริงไป GitHub
+
+รุ่นนี้ไม่อ่าน `SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_ACCESS_KEY` หรือ `OPENAI_API_KEY` สามารถลบตัวแปรเก่าที่ไม่ใช้จากโปรเจกต์นี้ได้
+
+1. แตก ZIP ก่อน แล้วเปิดโฟลเดอร์ที่เห็น `package.json` และ `app` อยู่ระดับเดียวกัน
+2. แทนที่ซอร์สเก่าใน GitHub ด้วยไฟล์และโฟลเดอร์ของรุ่นนี้ทั้งหมด
+3. ถ้า GitHub ปุ่มเลือกไฟล์เลือกโฟลเดอร์ไม่ได้ ให้ใช้ **GitHub Desktop**: Clone repository → คัดลอกทั้งชุดเข้าโฟลเดอร์ repository → Commit → Push origin (หรือใช้การลากโฟลเดอร์ในหน้า Upload files หากเบราว์เซอร์รองรับ)
+4. Vercel Framework: **Next.js**, Node: **22.x**, Build: `npm run build`, Install: `npm ci`
+5. Root Directory ต้องเป็นโฟลเดอร์ที่มี `package.json` และ `app`; ถ้าอัปโหลดทั้งชุดที่ root ให้ใช้ค่า root เริ่มต้น
+6. Deploy/Redeploy หลังตั้ง Environment Variables
+
+ZIP มีโฟลเดอร์ `app` จริง ไม่ใช่เพียงไฟล์ `package.json` จึงแก้ต้นเหตุ “Couldn't find any pages or app directory” เมื่ออัปโหลดครบ
+
+### 4. ตั้งผู้ดูแลคนแรก
+
+1. เปิดเว็บรุ่น 1.3 แล้วเข้าสู่ระบบด้วยบัญชี Google ของเจ้าของเว็บ
+2. เว็บจะแสดง “ส่งคำขอสิทธิ์แล้ว” และสร้างแถว `nexus_members` สถานะ pending
+3. เปิด `supabase/bootstrap-admin.sql` เปลี่ยน `REPLACE_WITH_YOUR_GOOGLE_EMAIL` เป็นอีเมลที่ใช้เข้าสู่ระบบจริง แล้วรันใน SQL Editor
+
+ระบบไม่ให้ผู้สมัครคนแรกกลายเป็นผู้ดูแลอัตโนมัติ เพื่อไม่ให้บุคคลอื่นได้สิทธิ์ก่อนเจ้าของ
+
+### 5. เปิดใช้การป้องกันข้อมูลทั้งหมด (จำเป็น)
+
+หลังมีผู้ดูแลคนแรกแล้ว รัน `supabase/activate-v1.3.sql` ใน SQL Editor ทั้งไฟล์
+
+ขั้นตอนนี้ถอนสิทธิ์อ่านแบบ anonymous บนตารางเกม/หัวข้อและ catalog และกำหนด RLS ตามสมาชิก จึงทำให้เว็บรุ่นเก่าที่อ่านแบบสาธารณะใช้ไม่ได้ ควรทำในช่วงเปลี่ยนไปใช้ 1.3 และอย่ารัน SQL รุ่นเก่าที่เปิดการอ่านสาธารณะทับภายหลัง
+
+**ห้ามถือว่าข้อมูลเป็นส่วนตัวหากยังไม่ได้รัน Activate สำเร็จ** หน้าล็อกอินอย่างเดียวไม่ปิดการเข้าฐานข้อมูลโดยตรง
+
+รีเฟรชหน้าเว็บ แล้วทดสอบด้วยเจ้าของเว็บและบัญชีทดสอบอีกบัญชีตามรายการด้านล่าง เก็บหรือจำกัดการเข้าถึง deployment รุ่นเก่าที่เคยใช้สิทธิ์ระดับ service เพื่อไม่ให้เหลือเส้นทางจัดการเก่า
+
+## ใช้งานหลังติดตั้ง
+
+- อนุมัติคนใหม่: จัดการ → สิทธิ์สมาชิก → สถานะ “อนุมัติแล้ว” → เลือกบทบาท → บันทึก → ยืนยัน
+- ถอนสิทธิ์: เลือก “ระงับสิทธิ์” แล้วบันทึก คำขอข้อมูลครั้งถัดไปถูกปฏิเสธ หน้าเว็บตรวจซ้ำทุก 60 วินาทีและเมื่อกลับมาโฟกัส (ไม่สามารถเรียกคืนข้อความที่ผู้ใช้เคยคัดลอกหรือดาวน์โหลดแล้ว)
+- เปลี่ยนผู้ดูแล: แต่งตั้งผู้ดูแลคนที่สองก่อน ให้คนนั้นปรับสิทธิ์บัญชีเดิม ระบบป้องกันการเปลี่ยนสิทธิ์ตัวเองและการลบผู้ดูแลคนสุดท้าย
+- เพิ่มเกม: จัดการ → จัดการเกม กำหนดชื่อและรหัสเกมภาษาอังกฤษ/ตัวเลข/ขีดกลาง/ขีดล่าง รหัสเปลี่ยนภายหลังไม่ได้
+- รูปเกม: จัดการ → รูปเกม → เลือกเกม → เลือกรูป → บันทึกรูปเกม; ลบรูปกลับไปใช้ตัวอักษรย่อได้
+- แก้ไขหัวข้อ: เปิดคำตอบ → แก้ไขหัวข้อนี้ → บันทึก
+- รูปเกมใหม่ไม่จำเป็นต้องสร้างด้วย AI และไม่มีรายชื่อเกมที่จำกัดไว้ในโค้ด
+
+## ตรวจสอบหลังเปิดใช้งาน
+
+1. เปิด Incognito ที่ยังไม่ล็อกอิน: ต้องเห็นหน้าเข้าสู่ระบบ และ `/api/catalog` ต้องตอบ 401
+2. ล็อกอินบัญชีใหม่: ต้องเห็นหน้ารออนุมัติและอ่านหัวข้อไม่ได้
+3. อนุมัติเป็น viewer: ค้นและอ่านได้ แต่เพิ่มเกม/หัวข้อ/รูปหรือปรับสิทธิ์ไม่ได้
+4. เปลี่ยนเป็น editor: เพิ่มเกม รูป และแก้ไขหัวข้อได้ แต่จัดการสิทธิ์ไม่ได้
+5. ระงับสิทธิ์ขณะเปิดเว็บ: คำขอถัดไปต้องถูกปฏิเสธ และหน้าเว็บกลับไปหน้ารอ/ระงับภายในรอบตรวจ
+6. ทดสอบรูปด้วยบัญชีที่อนุมัติและ Incognito รวมทั้งสลับธีมบนมือถือ
+7. ทดสอบจำนวนข้อมูลเกิน 60 และหน้าสุดท้ายว่าครบ ไม่ซ้ำ
+
+การพัฒนาได้ตรวจ production build, TypeScript และชุดทดสอบ API แบบจำลองแล้ว ยังไม่ได้ทดสอบ Google OAuth กับ Client ID จริงหรือเปิดใช้ SQL บนฐานข้อมูล production ให้คุณ ออโตรีวิวปฏิเสธการทดลองแก้สิทธิ์บนฐานข้อมูลจริงแม้ตั้งใจ rollback จึงคง SQL เป็นไฟล์สำหรับขั้นตอนติดตั้ง การตรวจ Security Advisor ของฐานข้อมูลเดิมไม่พบรายการเตือนในเวลาตรวจ แต่ไม่ได้เป็นผลรับรอง SQL ใหม่
+
+## แก้ปัญหา
+
+| อาการ | ตรวจสอบ |
+| --- | --- |
+| Google `redirect_uri_mismatch` | Google redirect URI ต้องเป็น Supabase `/auth/v1/callback` ไม่ใช่ `/api/auth/callback` ของเว็บ |
+| กลับเว็บแล้วเข้าสู่ระบบไม่สำเร็จ | Supabase Redirect URL มี `/api/auth/callback**`, SITE_URL ตรงโดเมน, SESSION_SECRET ถูกตั้ง และลองเข้าสู่ระบบใหม่จากโดเมนหลัก |
+| เข้าได้แต่รออนุมัติ | ผู้ดูแลอนุมัติสมาชิก หรือทำ bootstrap สำหรับเจ้าของคนแรก |
+| ไม่พบตาราง/คอลัมน์/ฟังก์ชัน | รัน Prepare และ Activate ตามลำดับบนโปรเจกต์เดิม |
+| ค้นแล้ว 0 ทั้งที่มีข้อมูลหลัง bootstrap | ตรวจว่า Activate สำเร็จและสมาชิกเป็น approved |
+| HTTP 401 | Publishable key และ URL ต้องมาจากโปรเจกต์เดียวกัน; ล็อกอินใหม่หลังเปลี่ยนคีย์/SESSION_SECRET |
+| อัปโหลดรูปไม่ได้ | ตรวจสิทธิ์ editor/admin, SQL storage policies, ขนาดไม่เกิน 3 MB และชนิด PNG/JPEG/WebP |
+| Session หมดอายุ | เว็บต่ออายุผ่าน `/api/session` อัตโนมัติ; หากถูกยกเลิกให้ล็อกอินใหม่ |
+
+ข้อผิดพลาด upstream แสดง HTTP/code/reference โดยไม่แสดงคีย์หรือรายละเอียดแถวข้อมูล ใช้ reference ค้นใน Vercel Logs ได้
+
+## พัฒนาและทดสอบ
+
+```sh
+npm ci
+npm test
+npm run build
+npm run dev
+```
+
+สำหรับ local ตั้ง SITE_URL เป็น `http://localhost:3000` และเพิ่ม callback ของ localhost ใน Supabase Redirect URLs การเข้าสู่ระบบจริงต้องใช้ Supabase ที่ติดตั้ง SQL แล้ว
+
+สคริปต์ `npm test` จำลองบริการภายนอกเพื่อทดสอบ auth/roles/CSRF/pagination/upload/refresh ไม่ใช่การทดสอบ RLS จริงและไม่เขียนฐานข้อมูล production
