@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NEXUS · TOSM & Zone4",
-  description: "ศูนย์ข้อมูลเกม TOSM และ Zone4 ค้นหาไอเทม ตัวละคร และคู่มือ",
+  title: "NEXUS · Game Knowledge",
+  description: "คลังความรู้เกม ค้นคำตอบและจัดการข้อมูลทุกเกมในที่เดียว",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

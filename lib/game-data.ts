@@ -1,4 +1,4 @@
-export type Entry = {source_file?:string|null;source_id?:string|null;source_row?:number|null;source_category?:string|null;id:string;game:string;category:string;title:string;summary:string;content:string;tags:string[];source_url:string|null;updated_at:string};
+export type Entry = {topic?:string;source_file?:string|null;source_id?:string|null;source_row?:number|null;source_category?:string|null;id:string;game:string;category:string;title:string;summary:string;content:string;tags:string[];source_url:string|null;updated_at:string};
 export const demo:Entry[] = [
  ['TOSM','คู่มือ','เริ่มต้นการผจญภัย','ตัวอย่างโครงสร้างคู่มือสำหรับผู้เล่นใหม่','จัดเก็บขั้นตอนเริ่มเล่น เงื่อนไข และคำแนะนำสำหรับผู้เล่นใหม่ในหน้านี้ ข้อมูลนี้เป็นตัวอย่างการจัดหมวดหมู่ ยังไม่ใช่คู่มือเกมที่ตรวจสอบแล้ว',['เริ่มต้น','มือใหม่']],
  ['TOSM','ไอเทม','สารานุกรมอุปกรณ์','รวมข้อมูลอุปกรณ์และเงื่อนไขการใช้งาน','ตัวอย่างข้อมูล: ชื่ออุปกรณ์ ประเภท ค่าสถานะ เลเวลที่ต้องการ และแหล่งที่มา ให้แทนที่ด้วยข้อมูลจริงจาก Supabase',['อุปกรณ์','ไอเทม']],
