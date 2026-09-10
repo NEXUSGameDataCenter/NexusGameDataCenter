@@ -1,6 +1,6 @@
 {
   "name": "nexus-game-data-center",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,7 +11,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/smoke-test.mjs && node scripts/search-test.mjs"
+    "test": "node scripts/smoke-test.mjs && node scripts/search-test.mjs && node scripts/transfer-test.mjs && node scripts/import-api-test.mjs"
   },
   "dependencies": {
     "class-variance-authority": "0.7.1",
